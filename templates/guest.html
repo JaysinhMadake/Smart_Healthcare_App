@@ -122,21 +122,22 @@
         chatBox.scrollTop = chatBox.scrollHeight;
     }
 
-    async function getBotReply(message) {
-        try {
-            const response = await fetch("/chat", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ message })
-            });
+  async function getBotReply(message) {
+    try {
+        const response = await fetch("/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message })
+        });
 
-            const data = await response.json();
-            return data.reply || "No reply from server.";
-        } catch (err) {
-            console.error("Error:", err);
-            return "Sorry, something went wrong.";
-        }
+        const data = await response.json();
+        return data.response || "No reply from server.";  // ✅ changed 'reply' → 'response'
+    } catch (err) {
+        console.error("Error:", err);
+        return "Sorry, something went wrong.";
     }
+}
+
 </script>
 
 </html>

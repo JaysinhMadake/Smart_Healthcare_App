@@ -4,7 +4,7 @@ from datetime import datetime
 db = SQLAlchemy()
 
 class ChatHistory(db.Model):
-    __tablename__ = 'chat_history'  # exactly matches your DB table name
+    __tablename__ = 'chat_history'
 
     id = db.Column(db.Integer, primary_key=True)
     user_message = db.Column(db.Text, nullable=False)

@@ -1,156 +1,91 @@
-from flask import Flask, render_template, request, redirect, url_for, session, flash, jsonify
-import mysql.connector
-from mysql.connector import Error
-from werkzeug.security import generate_password_hash, check_password_hash
-from chatbot.gpt_api import ask_doctor_bot
-import os
+from flask import Flask, render_template, request, jsonify, redirect, url_for
+from flask_sqlalchemy import SQLAlchemy
 from dotenv import load_dotenv
+import os
+from chatbot.gpt_api import ask_doctor_bot
 
-# Load environment variables from .env file
+# Load environment variables from .env
 load_dotenv()
 
-# Initialize Flask app
 app = Flask(__name__)
 
-app.secret_key = "super_secure_secret_123"
+# ----------------------------------
+# Database Configuration (Railway)
+# ----------------------------------
+app.config['SQLALCHEMY_DATABASE_URI'] = (
+    f"mysql+mysqlconnector://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}"
+    f"@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
+)
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
-# Load API key from .env
-API_KEY = os.getenv("GPT_API_KEY")
+db = SQLAlchemy(app)
 
-# Database configuration from .env
-db_config = {
-    'host': os.environ.get('DB_HOST'),
-    'port': int(os.environ.get('DB_PORT')),
-    'user': os.environ.get('DB_USER'),
-    'password': os.environ.get('DB_PASSWORD'),
-    'database': os.environ.get('DB_NAME'),
-    'ssl_disabled': True
-}
+# ----------------------------------
+# ChatHistory Model
+# ----------------------------------
+class ChatHistory(db.Model):
+    __tablename__ = 'chat_history'
+    id = db.Column(db.Integer, primary_key=True)
+    user_message = db.Column(db.Text, nullable=False)
+    bot_response = db.Column(db.Text, nullable=False)
 
-# ---------------- ROUTES ---------------- #
+# Create tables (only once)
+with app.app_context():
+    db.create_all()
 
-@app.route("/")
+# ----------------------------------
+# Routes
+# ----------------------------------
+
+@app.route('/')
 def home():
-    return redirect(url_for("guest"))  # redirect to guest page
+    return redirect(url_for('guest'))
 
-@app.route("/guest")
+@app.route('/guest')
 def guest():
-    return render_template("guest.html")
+    return render_template('guest.html')
 
-@app.route("/register", methods=["GET", "POST"])
-def register():
-    if request.method == "POST":
-        name = request.form.get("name")
-        email = request.form.get("email")
-        age = request.form.get("age")
-        gender = request.form.get("gender")
-        password = generate_password_hash(request.form.get("password"))
-        try:
-            conn = mysql.connector.connect(**db_config)
-            cursor = conn.cursor()
-            cursor.execute(
-                "INSERT INTO users (name, email, password, age, gender) VALUES (%s, %s, %s, %s, %s)",
-                (name, email, password, age, gender)
-            )
-            conn.commit()
-            flash("✅ Registered successfully. Please log in.", "success")
-            return redirect(url_for("login"))
-        except mysql.connector.IntegrityError:
-            flash("❌ Email already exists", "danger")
-        finally:
-            if conn.is_connected():
-                cursor.close()
-                conn.close()
-    return render_template("register.html")
-
-@app.route("/login", methods=["GET", "POST"])
+@app.route('/login')
 def login():
-    if request.method == "POST":
-        email = request.form.get("email")
-        password = request.form.get("password")
-        try:
-            conn = mysql.connector.connect(**db_config)
-            cursor = conn.cursor(dictionary=True)
-            cursor.execute("SELECT * FROM users WHERE email = %s", (email,))
-            user = cursor.fetchone()
+    return render_template('login.html')
 
-            if user:
-                if check_password_hash(user["password"], password):
-                    session["user_id"] = user["id"]
-                    session["username"] = user["name"]
-                    return redirect(url_for("dashboard"))
-                else:
-                    flash("❌ Incorrect password", "danger")
-            else:
-                flash("❌ Email not found", "danger")
-        except Error as e:
-            print("❌ Database error:", e)
-            flash("❌ Database error", "danger")
-        finally:
-            if conn.is_connected():
-                cursor.close()
-                conn.close()
-    return render_template("login.html")
+@app.route('/register')
+def register():
+    return render_template('register.html')
 
-@app.route("/dashboard", methods=["GET", "POST"])
+@app.route('/dashboard')
 def dashboard():
-    if not session.get("user_id"):
-        flash("⚠ Please login to access the dashboard.", "warning")
-        return redirect(url_for("login"))
-    
-    bot_response = ""
-    if request.method == "POST":
-        user_input = request.form.get("symptoms", "")
-        if user_input:
-            bot_response = ask_doctor_bot(user_input)
-    
-    return render_template("dashboard.html", username=session.get("username"), response=bot_response)
+    return render_template('dashboard.html')
 
-@app.route("/logout")
-def logout():
-    session.clear()
-    flash("✅ Logged out successfully.", "info")
-    return redirect(url_for("login"))
 
-@app.route("/chat", methods=["POST"])
+# ----------------------------------
+# Chatbot Route
+# ----------------------------------
+@app.route('/chat', methods=['POST'])
 def chat():
-    user_message = request.json.get("message")
+    try:
+        data = request.get_json()
+        user_message = data.get("message", "")
 
-    if not user_message:
-        return jsonify({"reply": "Please enter your symptoms."})
+        if not user_message.strip():
+            return jsonify({"reply": "Please enter a valid message."})
 
-    reply = ask_doctor_bot(user_message)
-    user_id = session.get("user_id")
+        bot_response = ask_doctor_bot(user_message)
 
-    if user_id:
-        try:
-            conn = mysql.connector.connect(**db_config)
-            cursor = conn.cursor()
+        # Save chat to database
+        new_chat = ChatHistory(user_message=user_message, bot_response=bot_response)
+        db.session.add(new_chat)
+        db.session.commit()
 
-            # Save chat history
-            cursor.execute(
-                "INSERT INTO chat_history (user_id, message, response) VALUES (%s, %s, %s)",
-                (user_id, user_message, reply)
-            )
+        return jsonify({"reply": bot_response})
 
-            # Save symptom report if detected
-            if any(symptom in user_message.lower() for symptom in ["fever", "cough", "headache", "pain", "nausea"]):
-                cursor.execute(
-                    "INSERT INTO symptom_reports (user_id, symptoms, bot_response) VALUES (%s, %s, %s)",
-                    (user_id, user_message, reply)
-                )
-
-            conn.commit()
-        except mysql.connector.Error as e:
-            print("❌ DB Error:", e)
-        finally:
-            if conn.is_connected():
-                cursor.close()
-                conn.close()
-
-    return jsonify({"reply": reply})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
-# Run Flask server
-if __name__ == "__main__":
-    app.run(debug=True)
+# ----------------------------------
+# Run App
+# ----------------------------------
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
