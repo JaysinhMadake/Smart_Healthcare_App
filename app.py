@@ -1,91 +1,89 @@
-from flask import Flask, render_template, request, jsonify, redirect, url_for
-from flask_sqlalchemy import SQLAlchemy
+# app.py
+from flask import Flask, render_template, request, jsonify
+from flask_cors import CORS
 from dotenv import load_dotenv
-import os
-from chatbot.gpt_api import ask_doctor_bot
+from models import db, ChatHistory
+from chatbot.gpt_api import get_gpt_reply
 
-# Load environment variables from .env
+import os
+
+# ✅ Load environment variables from .env
 load_dotenv()
 
+# ✅ Initialize Flask app
 app = Flask(__name__)
+CORS(app)
 
-# ----------------------------------
-# Database Configuration (Railway)
-# ----------------------------------
-app.config['SQLALCHEMY_DATABASE_URI'] = (
-    f"mysql+mysqlconnector://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}"
-    f"@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
+# ✅ Database configuration (connected to Railway DB)
+DB_HOST = os.getenv("DB_HOST")
+DB_PORT = os.getenv("DB_PORT")
+DB_USER = os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("DB_PASSWORD")
+DB_NAME = os.getenv("DB_NAME")
+
+app.config["SQLALCHEMY_DATABASE_URI"] = (
+    f"mysql+mysqlconnector://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 )
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-db = SQLAlchemy(app)
+# ✅ Initialize database
+db.init_app(app)
 
-# ----------------------------------
-# ChatHistory Model
-# ----------------------------------
-class ChatHistory(db.Model):
-    __tablename__ = 'chat_history'
-    id = db.Column(db.Integer, primary_key=True)
-    user_message = db.Column(db.Text, nullable=False)
-    bot_response = db.Column(db.Text, nullable=False)
-
-# Create tables (only once)
+# ✅ Create database tables (only runs once)
 with app.app_context():
     db.create_all()
 
-# ----------------------------------
-# Routes
-# ----------------------------------
+# ------------------------------------------------------
+# 🔹 ROUTES
+# ------------------------------------------------------
 
-@app.route('/')
-def home():
-    return redirect(url_for('guest'))
-
-@app.route('/guest')
+@app.route("/")
 def guest():
-    return render_template('guest.html')
+    return render_template("guest.html")
 
-@app.route('/login')
+@app.route("/login")
 def login():
-    return render_template('login.html')
+    return render_template("login.html")
 
-@app.route('/register')
+@app.route("/register")
 def register():
-    return render_template('register.html')
+    return render_template("register.html")
 
-@app.route('/dashboard')
+@app.route("/dashboard")
 def dashboard():
-    return render_template('dashboard.html')
+    return render_template("dashboard.html")
 
+# ------------------------------------------------------
+# 🔹 CHATBOT ROUTE
+# ------------------------------------------------------
 
-# ----------------------------------
-# Chatbot Route
-# ----------------------------------
-@app.route('/chat', methods=['POST'])
+@app.route("/chat", methods=["POST"])
 def chat():
     try:
         data = request.get_json()
         user_message = data.get("message", "")
 
-        if not user_message.strip():
-            return jsonify({"reply": "Please enter a valid message."})
+        if not user_message:
+            return jsonify({"reply": "Please type a message."})
 
-        bot_response = ask_doctor_bot(user_message)
+        # ✅ Get bot response from OpenRouter API
+        bot_reply = get_gpt_reply(user_message)
 
-        # Save chat to database
-        new_chat = ChatHistory(user_message=user_message, bot_response=bot_response)
+
+        # ✅ Save to Railway database
+        new_chat = ChatHistory(user_message=user_message, bot_response=bot_reply)
         db.session.add(new_chat)
         db.session.commit()
 
-        return jsonify({"reply": bot_response})
+        return jsonify({"reply": bot_reply})
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        print(f"Error in /chat route: {e}")
+        return jsonify({"reply": "Error occurred on server. Please try again."})
 
+# ------------------------------------------------------
+# 🔹 RUN LOCALLY
+# ------------------------------------------------------
 
-# ----------------------------------
-# Run App
-# ----------------------------------
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+if __name__ == "__main__":
+    app.run(debug=True)

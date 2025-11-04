@@ -1,30 +1,46 @@
-# chatbot/gpt_api.py
-import requests
 import os
+import requests
+from dotenv import load_dotenv
 
-def ask_doctor_bot(user_message):
-    url = "https://openrouter.ai/api/v1/chat/completions"
+# Load environment variables
+load_dotenv()
 
-    headers = {
-        "Content-Type": "application/json",
-        # ✅ Your OpenRouter API key is added below
-        "Authorization": f"Bearer {os.getenv('GPT_API_KEY')}"
+API_KEY = os.getenv("GPT_API_KEY")
+if not API_KEY:
+    print("❌ ERROR: GPT_API_KEY not found in .env file")
 
-    }
+def get_gpt_reply(message):
+    """
+    Sends the user message to the OpenRouter GPT API and returns the response.
+    """
+    try:
+        headers = {
+            "Authorization": f"Bearer {API_KEY}",
+            "Content-Type": "application/json",
+        }
 
-    data = {
-        "model": "openai/gpt-3.5-turbo",  # You can change to gpt-4 if your plan supports it
-        "messages": [
-            {"role": "system", "content": "You are a helpful medical assistant. Give suggestions based on symptoms."},
-            {"role": "user", "content": user_message}
-        ],
-        "max_tokens": 300,
-        "temperature": 0.7
-    }
+        data = {
+            "model": "gpt-3.5-turbo",
+            "messages": [
+                {"role": "system", "content": "You are a helpful medical assistant chatbot."},
+                {"role": "user", "content": message},
+            ],
+        }
 
-    response = requests.post(url, headers=headers, json=data)
+        response = requests.post("https://openrouter.ai/api/v1/chat/completions",
+                                 headers=headers, json=data)
 
-    if response.status_code == 200:
-        return response.json()["choices"][0]["message"]["content"]
-    else:
-        return f"Error {response.status_code}:\n{response.text}"
+        # Debugging info
+        print("🛰️ API Response Status:", response.status_code)
+        print("📦 Raw Response:", response.text)
+
+        if response.status_code == 200:
+            json_response = response.json()
+            reply = json_response["choices"][0]["message"]["content"]
+            return reply
+        else:
+            return f"⚠️ Error from API: {response.status_code} - {response.text}"
+
+    except Exception as e:
+        print("❌ Exception:", e)
+        return "Sorry, something went wrong while connecting to GPT API."
